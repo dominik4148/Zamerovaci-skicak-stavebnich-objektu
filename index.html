@@ -38,6 +38,8 @@ select,input,button{font:inherit;color:inherit}
 .btn svg{width:18px;height:18px;flex:none}
 .btn.primary,.btn.on{background:var(--active);color:var(--active-ink);border-color:var(--active)}
 .btn.scale.on{background:#169a43;border-color:#169a43}
+.btn.msel.on{background:#1c64f2;border-color:#1c64f2;color:#fff}
+.btn.msel.all.on{background:#e8780c;border-color:#e8780c;color:#fff}
 .btn.danger{color:#e03a3a}
 .btn:focus-visible,.tool:focus-visible,.chip:focus-visible,.seg:focus-visible,.ebtn:focus-visible,.tgl:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
 .spacer{flex:1}
@@ -138,6 +140,8 @@ canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none;displa
     <button class="btn" id="redo" title="Znovu" aria-label="Znovu"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 14l5-5-5-5"/><path d="M20 9H10a6 6 0 000 12h3"/></svg></button>
     <button class="btn" id="fingerBtn" title="Kreslení prstem"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11V5a1.5 1.5 0 013 0v5"/><path d="M12 10V4a1.5 1.5 0 013 0v6"/><path d="M15 10V6a1.5 1.5 0 013 0v7a7 7 0 01-7 7h-.5a6 6 0 01-4.6-2.2L3.5 14.5a1.5 1.5 0 012.3-1.9L9 15"/></svg><span class="lbl" id="fingerLbl">Prst posouvá</span></button>
     <button class="btn scale" id="scaleBtn" title="Kreslení v měřítku"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 15l12-12 6 6-12 12z"/><path d="M7 11l2 2M10 8l2 2M13 5l2 2"/></svg><span class="lbl" id="scaleLbl">Měřítko vyp.</span></button>
+    <button class="btn msel" id="selMarksBtn" title="Výběr kresby a textů obdélníkem"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="4" width="18" height="16" rx="1" stroke-dasharray="3 3"/><path d="M7 15c2-4 3 1 5-2s3-3 5-2"/></svg><span class="lbl">Výběr kresby</span></button>
+    <button class="btn msel all" id="selAllBtn" title="Výběr všeho obdélníkem"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="4" width="18" height="16" rx="1" stroke-dasharray="3 3"/><path d="M7 16V9h6v3h4v4z" fill="currentColor" fill-opacity=".35"/></svg><span class="lbl">Výběr všeho</span></button>
     <span class="spacer"></span>
     <button class="btn" id="backupBtn" title="Záloha a načtení"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 18a5 5 0 01-.6-10A6 6 0 0118 9a4 4 0 01-1 9"/><path d="M12 12v9M9 15l3-3 3 3"/></svg><span class="lbl">Záloha</span></button>
     <button class="btn" id="settingsBtn" title="Nastavení výkresu" aria-label="Nastavení výkresu"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.8-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1.1-1.5 1.7 1.7 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.8 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.5-1.1 1.7 1.7 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.8.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z"/></svg></button>
@@ -229,11 +233,30 @@ ST.vis=Object.assign({},VIS_DEF,ST.vis||{});
 if(ST.vis.itemLabels===false){ST.vis.itemIds=false;ST.vis.itemVals=false}delete ST.vis.itemLabels;
 if(ST.fingerDraw===null)ST.fingerDraw=window.matchMedia('(max-width: 700px) and (pointer: coarse)').matches;
 store.sketches.forEach(normalizeSketch);
+/* photos live in IndexedDB (large quota); the main store keeps only a reference */
+const photoData=new Map();let idb=null;
+function idbOpen(){return new Promise(res=>{try{const rq=indexedDB.open('skicak-fotky',1);rq.onupgradeneeded=()=>rq.result.createObjectStore('p');rq.onsuccess=()=>res(rq.result);rq.onerror=()=>res(null);rq.onblocked=()=>res(null)}catch(e){res(null)}})}
+function idbReq(mode,fn){return new Promise((res,rej)=>{try{const tx=idb.transaction('p',mode);const r=fn(tx.objectStore('p'));tx.oncomplete=()=>res(r&&r.result);tx.onerror=()=>rej(tx.error);tx.onabort=()=>rej(tx.error)}catch(e){rej(e)}})}
+const photoSrc=it=>it.src||photoData.get(it.photoId)||'';
+async function storePhoto(it){if(!idb||!it.src)return false;const id=it.photoId||uid();await idbReq('readwrite',st=>st.put(it.src,id));photoData.set(id,it.src);it.photoId=id;delete it.src;return true}
+async function initPhotos(){
+  idb=await idbOpen();if(!idb)return;
+  try{
+    const keys=await idbReq('readonly',st=>st.getAllKeys())||[],vals=await idbReq('readonly',st=>st.getAll())||[];
+    keys.forEach((k,i)=>photoData.set(k,vals[i]));
+    let moved=false;for(const sk of store.sketches)for(const it of sk.items)if(it.kind==='photo'&&it.src){try{if(await storePhoto(it))moved=true}catch(e){}}
+    const used=new Set();store.sketches.forEach(sk=>sk.items.forEach(it=>{if(it.kind==='photo'&&it.photoId)used.add(it.photoId)}));
+    for(const k of keys)if(!used.has(k)){try{await idbReq('readwrite',st=>st.delete(k))}catch(e){}photoData.delete(k)}
+    if(moved)saveNow();draw();
+  }catch(e){}
+}
 let S=store.sketches[store.cur]||store.sketches[0];
 let saveT=0;
 let quotaWarned=0;
-function save(){clearTimeout(saveT);saveT=setTimeout(()=>{try{localStorage.setItem(LS_KEY,JSON.stringify(store))}catch(e){if(Date.now()-quotaWarned>20000){quotaWarned=Date.now();toast('Paměť prohlížeče je plná – udělej zálohu a smaž některé fotky')}}},250)}
+function saveNow(){try{localStorage.setItem(LS_KEY,JSON.stringify(store));return true}catch(e){if(Date.now()-quotaWarned>15000){quotaWarned=Date.now();toast('Paměť je plná – změny se neukládají! Udělej hned zálohu (Záloha)')}return false}}
+function save(){clearTimeout(saveT);saveT=setTimeout(saveNow,250)}
 
+let marquee=null,multiSel=[],groupOp='move',groupRot=null;
 let tool='wall', sel=null, pendingDoor=null, pendingStair=null, editMode=null, rotInfo=null;
 const undoStack=[],redoStack=[];
 const snapS=()=>JSON.stringify({rooms:S.rooms,openings:S.openings,items:S.items,marks:S.marks});
@@ -539,8 +562,8 @@ function openingLabelPos(o,g,nLines,s){
 function drawScene(c,v,w,h,opt={}){
   const sk=opt.sketch||S;const T=p=>w2s(p,v);const vis=opt.vis||ST.vis;
   c.save();c.fillStyle=BG;c.fillRect(0,0,w,h);
-  const drawPhotos=()=>sk.items.forEach(it=>{if(it.kind!=='photo')return;const im=getImg(it.src);const a=T([it.p[0]-it.w/2,it.p[1]-it.h/2]),ww=it.w*v.s,hh=it.h*v.s;
-    if(im.complete&&im.naturalWidth)c.drawImage(im,a[0],a[1],ww,hh);else{c.fillStyle='#e6e8e3';c.fillRect(a[0],a[1],ww,hh)}c.strokeStyle='#c9ccc4';c.lineWidth=1;c.strokeRect(a[0],a[1],ww,hh)});
+  const drawPhotos=()=>sk.items.forEach(it=>{if(it.kind!=='photo')return;const ps=photoSrc(it),im=ps?getImg(ps):null;const a=T([it.p[0]-it.w/2,it.p[1]-it.h/2]),ww=it.w*v.s,hh=it.h*v.s;
+    if(im&&im.complete&&im.naturalWidth)c.drawImage(im,a[0],a[1],ww,hh);else{c.fillStyle='#e6e8e3';c.fillRect(a[0],a[1],ww,hh)}c.strokeStyle='#c9ccc4';c.lineWidth=1;c.strokeRect(a[0],a[1],ww,hh)});
   if(opt.grid&&vis.grid){
     let step=20;while(step*v.s<14)step*=2;while(step*v.s>60)step/=2;
     const sx=v.ox%(step*v.s),sy=v.oy%(step*v.s);c.strokeStyle='#eceee9';c.lineWidth=1;c.beginPath();
@@ -719,6 +742,16 @@ function draw(){
   ctx.setTransform(DPR,0,0,DPR,0,0);
   labPos={};drawScene(ctx,view,W,H,{grid:true,sel:true,pending:pendingDoor,lab:labPos});
   drawLabelHandles(ctx);drawVertexHandles(ctx);
+  if(marquee){
+    const col=MSEL_COL[marquee];ctx.save();ctx.strokeStyle=col;ctx.lineWidth=1.6;
+    const gb=multiSel.length?groupBox():null;
+    if(gb){const A=w2s([gb.x0,gb.y0]),B=w2s([gb.x1,gb.y1]);ctx.fillStyle=col+'14';ctx.fillRect(A[0],A[1],B[0]-A[0],B[1]-A[1]);ctx.setLineDash([7,5]);ctx.strokeRect(A[0],A[1],B[0]-A[0],B[1]-A[1]);ctx.setLineDash([]);
+      ctx.fillStyle='#fff';[[A[0],A[1]],[B[0],A[1]],[B[0],B[1]],[A[0],B[1]]].forEach(q=>{ctx.fillRect(q[0]-4,q[1]-4,8,8);ctx.strokeRect(q[0]-4,q[1]-4,8,8)});
+      multiSel.forEach(h=>{const pts=elemPoints(h);if(!pts.length)return;const b=bboxOf(pts),P=w2s([b.x0,b.y0]),Q=w2s([b.x1,b.y1]);ctx.globalAlpha=.5;ctx.strokeRect(P[0]-2,P[1]-2,Q[0]-P[0]+4,Q[1]-P[1]+4);ctx.globalAlpha=1})}
+    if(act&&act.kind==='marquee'){const A=w2s(act.a),B=w2s(act.b);ctx.fillStyle=col+'1f';ctx.fillRect(A[0],A[1],B[0]-A[0],B[1]-A[1]);ctx.setLineDash(marquee==='marks'?[6,4]:[12,4,2,4]);ctx.lineWidth=2;ctx.strokeRect(A[0],A[1],B[0]-A[0],B[1]-A[1])}
+    if(groupRot){const P=w2s(groupRot.pivot);ctx.setLineDash([]);ctx.beginPath();ctx.arc(P[0],P[1],5,0,7);ctx.fillStyle=col;ctx.fill();const deg=-groupRot.a/DEG;haloText(ctx,`${deg>0?'+':''}${deg.toFixed(0)}°`,P[0],P[1]-18,col,14,700)}
+    ctx.restore();
+  }
   const T=p=>w2s(p);
   if(pendingStair){ctx.save();ctx.globalAlpha=.55;drawStair(ctx,{...pendingStair,type:'straight'},T,view,VIOLET);ctx.restore()}
   drawProtractor(ctx);
@@ -931,7 +964,7 @@ function applyTranslate(st,d){
   if(st.h.type==='opening'){attachToWall(o,add(st.c0,d));return}
   if(st.h.type==='item'&&o.kind==='chimney'&&o.inWall){attachToWall(o,add(st.orig.p,d));return}
   let dd=d;
-  if(st.h.type==='room'){const moved=st.orig.pts.map(p=>add(p,d));dd=add(d,snapShift(moved,globalTheta(),o.id))}
+  if(st.h.type==='room'&&!st.noSnap){const moved=st.orig.pts.map(p=>add(p,d));dd=add(d,snapShift(moved,globalTheta(),o.id))}
   const P=p=>add(p,dd);Object.assign(o,mapGeom(st.orig,st.h.type,P,a=>a,false));
   if(st.att)st.att.forEach(({c,orig})=>{c.p=P(orig.p)});
 }
@@ -1003,6 +1036,12 @@ cv.addEventListener('pointerdown',e=>{
   if(pinch||act)return;
   const sp=[e.offsetX,e.offsetY],wp=s2w(sp);
   const base={id:e.pointerId,ptype:e.pointerType,start:sp,last:sp,t0:performance.now(),moved:0,w0:wp};
+  if(marquee){
+    if(!isDrawPtr(e)){act={...base,kind:'pan',v:{...view}};return}
+    const gb=multiSel.length?groupBox():null;
+    if(gb&&inBox(wp,gb)){act={...base,kind:'group',op:groupOp,pushed:false};return}
+    act={...base,kind:'marquee',a:wp,b:wp};return;
+  }
   if(sel&&editMode!=='rotate'&&editMode!=='mirror'&&(e.pointerType==='touch'||tool==='select'||editMode==='move')){
     const vk=vertexHandleAt(sp);if(vk!=null){act={...base,kind:'vertex',k:vk,pushed:false};return}
     const wi=wallAxisAt(wp);if(wi!=null){act={...base,kind:'wallAxis',i:wi,orig:clone(getObj(sel)),pushed:false};return}
@@ -1075,6 +1114,21 @@ cv.addEventListener('pointermove',e=>{
   }
   if(!act||act.id!==e.pointerId)return;
   const sp=[e.offsetX,e.offsetY],wp=s2w(sp);act.moved=Math.max(act.moved,dist(sp,act.start));act.last=sp;
+  if(act.kind==='marquee'){act.b=wp;draw();return}
+  if(act.kind==='group'){
+    if(act.moved<4)return;
+    if(!act.pushed){
+      pushUndo();act.pushed=true;
+      if(act.op==='copy'){const src=groupMovers();multiSel=src.map(h=>copyOf(h)).filter(Boolean)}
+      const gb=groupBox();act.pivot=gb?[(gb.x0+gb.x1)/2,(gb.y0+gb.y1)/2]:act.w0;act.a0=angOf(sub(act.w0,act.pivot));
+      act.tfs=groupMovers().map(h=>{const t=startTransform(h);t.noSnap=true;return t});
+    }
+    if(act.op==='rotate'){
+      let a=angDiff(angOf(sub(wp,act.pivot)),act.a0);const k=Math.round(a/(15*DEG))*15*DEG;if(Math.abs(a-k)<3*DEG)a=k;
+      act.tfs.forEach(t=>{if(t.h.type==='opening'||(t.h.type==='item'&&getObj(t.h).kind==='chimney'&&getObj(t.h).inWall))return;applyRotate(t,act.pivot,a)});groupRot={pivot:act.pivot,a};
+    }else{const d=sub(wp,act.w0);act.tfs.forEach(t=>applyTranslate(t,d))}
+    draw();return;
+  }
   if(act.kind==='vertex'){if(act.moved<3)return;if(!act.pushed){pushUndo();act.pushed=true}const o=getObj(sel);if(!o)return;const info=snapInfo(wp,sel.type==='room'?o.id:null);o.pts[act.k]=info?info.p.slice():wp;draw();return}
   if(act.kind==='wallAxis'){if(act.moved<3)return;if(!act.pushed){pushUndo();act.pushed=true}const r=getObj(sel);if(!r)return;moveWall(r,act.orig,act.i,wp,act.w0);draw();return}
   if(act.kind==='label'){if(act.moved<3)return;if(!act.pushed){pushUndo();act.pushed=true}setLo(act.key,add(act.lo0,mul(sub(sp,act.start),1/view.s)));draw();return}
@@ -1112,6 +1166,11 @@ function endPointer(e){
   if(!act||act.id!==e.pointerId)return;
   clearTimeout(holdT);
   const a=act;act=null;const isTap=a.moved<8&&performance.now()-a.t0<700;const wp=s2w(a.start);
+  if(a.kind==='marquee'){
+    if(dist(w2s(a.a),w2s(a.b))<10){multiSel=[]}else{multiSel=marqueeSelect(a.a,a.b);toast(multiSel.length?`Označeno: ${multiSel.length}`:'Nic není celé uvnitř obdélníku')}
+    renderCtx();updateHint();draw();return;
+  }
+  if(a.kind==='group'){groupRot=null;if(a.pushed){save();if(a.op!=='move'){groupOp='move';toast(a.op==='copy'?'Kopie vložena':'Otočeno')}renderCtx();updateHint()}draw();return}
   if(a.kind==='vertex'||a.kind==='wallAxis'||a.kind==='label'||a.kind==='photoRes'){if(a.pushed){save();renderSide();draw()}else if(isTap)select(hitAll(wp));return}
   if(a.kind==='pan'){save();if(isTap)select(hitAll(wp));return}
   if(a.kind==='selTap'){if(isTap){const h=hitAll(wp);if(h)select(h);else toast('Nejdřív ťukni na prvek')}return}
@@ -1408,7 +1467,46 @@ function renderRail(){
   rail.querySelectorAll('.tool').forEach(b=>b.onclick=()=>{if(b.dataset.t==='photo'){photoIn.value='';photoIn.click();return}setTool(b.dataset.t)});
 }
 function finishPendingStair(){if(pendingStair){pushUndo();S.items.push(pendingStair);pendingStair=null;save();toast('Uloženo jako přímé rameno')}}
+const MSEL_COL={marks:'#1c64f2',all:'#e8780c'};
+function elemPoints(h){
+  const o=getObj(h);if(!o)return [];
+  if(h.type==='room')return o.pts;
+  if(h.type==='opening'){const g=openingGeom(o);return g?[g.j1,g.j2]:[]}
+  if(h.type==='item'){
+    if(o.kind==='stair')return o.type==='spiral'?[add(o.c,[-o.r,-o.r]),add(o.c,[o.r,o.r])]:stairGeom(o).outline;
+    if(o.kind==='photo')return rectPts(o.p,0,o.w,o.h);
+    const r=itemRadius(o);return [add(o.p,[-r,-r]),add(o.p,[r,r])];
+  }
+  return o.kind==='text'?[o.a]:sampleDraw(o);
+}
+function pruneMulti(){multiSel=multiSel.filter(h=>getObj(h))}
+function groupBox(){pruneMulti();const pts=[];multiSel.forEach(h=>pts.push(...elemPoints(h)));if(!pts.length)return null;const b=bboxOf(pts),m=8/view.s;return {x0:b.x0-m,y0:b.y0-m,x1:b.x1+m,y1:b.y1+m}}
+function inBox(p,b){return b&&p[0]>=b.x0&&p[0]<=b.x1&&p[1]>=b.y0&&p[1]<=b.y1}
+function marqueeSelect(a,b){
+  const r={x0:Math.min(a[0],b[0]),x1:Math.max(a[0],b[0]),y0:Math.min(a[1],b[1]),y1:Math.max(a[1],b[1])};
+  const inside=h=>{const pts=elemPoints(h);return pts.length&&pts.every(p=>inBox(p,r))};
+  const out=[];
+  S.marks.forEach(m=>{if(m.kind==='text'?!ST.vis.texts:!ST.vis.drawings)return;const h={type:'mark',id:m.id};if(inside(h))out.push(h)});
+  if(marquee==='all'){
+    S.rooms.forEach(o=>{const h={type:'room',id:o.id};if(inside(h))out.push(h)});
+    S.openings.forEach(o=>{const h={type:'opening',id:o.id};if(inside(h))out.push(h)});
+    S.items.forEach(o=>{const h={type:'item',id:o.id};if(inside(h))out.push(h)});
+  }
+  return out;
+}
+// elements that need their own transform (openings / wall chimneys follow a selected room)
+function groupMovers(){
+  const rooms=new Set(multiSel.filter(h=>h.type==='room').map(h=>h.id));
+  const att=new Set();S.rooms.forEach(r=>{if(rooms.has(r.id))chimneysOn(r).forEach(c=>att.add(c.id))});
+  return multiSel.filter(h=>!(h.type==='opening'&&rooms.has(getObj(h).room))&&!(h.type==='item'&&att.has(h.id)));
+}
+function setMarquee(m){
+  marquee=marquee===m?null:m;multiSel=[];groupOp='move';groupRot=null;
+  if(marquee){finishPendingStair();pendingDoor=null;editMode=null;sel=null;renderSide()}
+  renderToggles();renderCtx();updateHint();draw();
+}
 function setTool(t){
+  if(marquee){marquee=null;multiSel=[];groupOp='move';renderToggles()}
   if(t!==tool)finishPendingStair();
   if(pendingDoor&&t!=='door')pendingDoor=null;
   if(editMode){editMode=null;rotInfo=null;renderEdit()}
@@ -1417,6 +1515,7 @@ function setTool(t){
 function updateHint(){
   const t=TOOLS.find(t=>t.id===tool);let txt=t?t.h:'';const wrap=document.getElementById('hintWrap');wrap.classList.remove('call');
   if(editMode){txt=EDIT_HINT[editMode];wrap.classList.add('call')}
+  if(marquee){txt=!multiSel.length?'Tužkou natáhni obdélník – označí se, co je celé uvnitř. Prst posouvá plochu.':groupOp==='copy'?'Kopírovat: táhni tužkou uvnitř výběru – vznikne kopie.':groupOp==='rotate'?'Otočit: táhni tužkou kolem středu výběru.':'Táhni tužkou uvnitř výběru = posun. Tažení mimo = nový výběr.';wrap.classList.add('call')}
   if(pendingDoor){txt='Ťukni na stranu stěny, kam se dveře otevírají – blíž k závěsům.';wrap.classList.add('call')}
   if(pendingStair){txt='Teď potáhni druhé rameno schodiště.';wrap.classList.add('call')}
   document.getElementById('hint').textContent=txt;
@@ -1435,6 +1534,16 @@ const ST_ICON={
 const ctxEl=document.getElementById('ctx');
 function renderCtx(){
   let h='';
+  if(marquee){
+    h=`<span style="font-size:13px;font-weight:700;color:${MSEL_COL[marquee]};white-space:nowrap">${marquee==='marks'?'Výběr kresby':'Výběr všeho'}${multiSel.length?' · '+multiSel.length:''}</span><span class="div"></span>`+
+      [['move','Posun'],['copy','Kopírovat'],['rotate','Otočit']].map(([k,n])=>`<button class="seg ${groupOp===k?'on':''}" data-gop="${k}">${n}</button>`).join('')+
+      `<span class="div"></span><button class="seg" data-gdel="1" ${multiSel.length?'':'disabled'}>Smazat výběr</button><button class="seg" data-gend="1">Hotovo</button>`;
+    ctxEl.innerHTML=h;ctxEl.hidden=false;
+    ctxEl.querySelectorAll('[data-gop]').forEach(b=>b.onclick=()=>{if(!multiSel.length&&b.dataset.gop!=='move'){toast('Nejdřív tužkou označ obdélníkem');return}groupOp=b.dataset.gop;renderCtx();updateHint()});
+    const del=ctxEl.querySelector('[data-gdel]');if(del)del.onclick=()=>{if(!multiSel.length)return;pushUndo();multiSel.forEach(h=>removeRaw(h.type,h.id));multiSel=[];save();renderCtx();draw();toast('Výběr smazán')};
+    ctxEl.querySelector('[data-gend]').onclick=()=>setMarquee(marquee);
+    return;
+  }
   if(tool==='line'||tool==='text'){
     h+=PAL.map(p=>`<button class="chip ${p.c===ST.drawColor?'on':''}" data-c="${p.c}" style="background:${p.c}" title="${p.n}" aria-label="${p.n}"></button>`).join('');
     h+=`<label class="chip custom" title="Vlastní barva"><input type="color" id="ctxCustom" value="${PAL.some(p=>p.c===ST.drawColor)?'#8b3fd9':ST.drawColor}" aria-label="Vlastní barva"></label>`;
@@ -1464,8 +1573,10 @@ function renderCtx(){
 const fingerBtn=document.getElementById('fingerBtn'),scaleBtn=document.getElementById('scaleBtn');
 function renderToggles(){
   fingerBtn.classList.toggle('on',!!ST.fingerDraw);document.getElementById('fingerLbl').textContent=ST.fingerDraw?'Prst kreslí':'Prst posouvá';fingerBtn.setAttribute('aria-pressed',ST.fingerDraw?'true':'false');
+  document.getElementById('selMarksBtn').classList.toggle('on',marquee==='marks');document.getElementById('selAllBtn').classList.toggle('on',marquee==='all');
   scaleBtn.classList.toggle('on',!!ST.scaleMode);document.getElementById('scaleLbl').textContent=ST.scaleMode?'Měřítko zap.':'Měřítko vyp.';scaleBtn.setAttribute('aria-pressed',ST.scaleMode?'true':'false');
 }
+document.getElementById('selMarksBtn').onclick=()=>setMarquee('marks');document.getElementById('selAllBtn').onclick=()=>setMarquee('all');
 fingerBtn.onclick=()=>{ST.fingerDraw=!ST.fingerDraw;save();renderToggles();toast(ST.fingerDraw?'Prst kreslí (posun: 2 prsty)':'Prst posouvá, kreslí jen tužka')};
 scaleBtn.onclick=()=>{ST.scaleMode=!ST.scaleMode;save();renderToggles();toast(ST.scaleMode?'Měřítko zapnuté – platí pro nově kreslené prvky':'Měřítko vypnuté')};
 
@@ -1648,7 +1759,7 @@ function renderPNG(){
   const bw=b?Math.max(b.x1-b.x0,100):400,bh=b?Math.max(b.y1-b.y0,100):300;
   const s=Math.min(2.6,Math.max(.6,1800/Math.max(bw,bh)));
   const w=Math.round(bw*s+pad*2),head=96,h=Math.round(bh*s+pad*2)+head;
-  const c=document.createElement('canvas');const K=2;c.width=w*K;c.height=h*K;const x=c.getContext('2d');x.scale(K,K);
+  const c=document.createElement('canvas');const K=Math.max(.5,Math.min(2,Math.sqrt(1.1e7/(w*h))));c.width=Math.round(w*K);c.height=Math.round(h*K);const x=c.getContext('2d');x.scale(K,K);
   drawScene(x,{s,ox:pad-(b?b.x0:0)*s,oy:head+pad-(b?b.y0:0)*s},w,h,{});
   const ff=getComputedStyle(document.documentElement).getPropertyValue('--f-ui');
   x.textAlign='left';x.fillStyle=INK;x.font=`700 22px ${ff}`;x.textBaseline='top';x.fillText(S.name,24,22);
@@ -1672,7 +1783,10 @@ async function getDl(){
       // the tap "expired" while the file was being prepared – ask for one more tap
       await new Promise((res,rej)=>{const b=document.createElement('button');b.className='btn primary';b.style.marginTop='10px';b.textContent='Klepni pro uložení: '+filename;
         b.onclick=async()=>{b.remove();try{const r2=await share(f);r2===true?res():(viaLink(f),res())}catch(e){rej(e)}};
-        (document.getElementById('modal').hidden?document.body:document.getElementById('modalCard')).appendChild(b)});
+        b.style.width='100%';b.style.height='48px';b.style.margin='4px 0 12px';
+        const card=document.getElementById('modalCard'),open=!document.getElementById('modal').hidden;
+        if(open){card.insertBefore(b,card.children[1]||null);b.scrollIntoView({block:'center'})}else{b.style.position='fixed';b.style.left='50%';b.style.bottom='24px';b.style.transform='translateX(-50%)';b.style.zIndex='30';b.style.width='auto';document.body.appendChild(b)}
+        try{toast('Soubor je připravený – klepni na tlačítko Uložit')}catch(e){}});
       return;
     }
     viaLink(f);
@@ -1680,7 +1794,7 @@ async function getDl(){
   return dl;
 }
 const toBlob=(c,type,q)=>new Promise(res=>c.toBlob(res,type,q));
-async function makePDF(){const c=renderPNG();const jb=await toBlob(c,'image/jpeg',.92);const buf=new Uint8Array(await jb.arrayBuffer());return new Blob([buildPDF(buf,c.width,c.height,ST.paper)],{type:'application/pdf'})}
+async function makePDF(){const c=renderPNG();const jb=await toBlob(c,'image/jpeg',.9);if(!jb)throw new Error('canvas');const buf=new Uint8Array(await jb.arrayBuffer());return new Blob([buildPDF(buf,c.width,c.height,ST.paper)],{type:'application/pdf'})}
 function makeDXFZip(){const name=safeName();return new Blob([buildZip([{name:name+'.dxf',data:buildDXF()}])],{type:'application/zip'})}
 document.getElementById('exportBtn').onclick=async()=>{
   cleanupEmptyText();finishPendingStair();
@@ -1695,11 +1809,12 @@ document.getElementById('exportBtn').onclick=async()=>{
   if(!dl)['e_both','e_png','e_pdf','e_json','e_dxf'].forEach(id=>$(id).hidden=true);
   const json=()=>JSON.stringify(exportData(),null,2);
   const saveFile=async(filename,data)=>{try{await dl.save({filename,data});return true}catch(e){msg(e&&e.code==='declined'?'Uložení zrušeno.':'Uložení se nepovedlo – zkus „Zobrazit obrázek“ nebo zkopírovat data.');return false}};
-  $('e_png').onclick=async()=>{if(await saveFile(safeName()+'.png',await toBlob(renderPNG(),'image/png')))msg('Obrázek uložen.')};
-  $('e_pdf').onclick=async()=>{if(await saveFile(safeName()+'.pdf',await makePDF()))msg('PDF uloženo.')};
+  const guard=fn=>async()=>{try{msg('Připravuji soubor…');await fn()}catch(e){msg('Soubor se nepodařilo vytvořit. Zkus PNG nebo data JSON.')}};
+  $('e_png').onclick=guard(async()=>{const b=await toBlob(renderPNG(),'image/png');if(!b)throw 0;if(await saveFile(safeName()+'.png',b))msg('Obrázek uložen.')});
+  $('e_pdf').onclick=guard(async()=>{if(await saveFile(safeName()+'.pdf',await makePDF()))msg('PDF uloženo.')});
   $('e_json').onclick=async()=>{if(await saveFile(safeName()+'.json',json()))msg('Data uložena.')};
   $('e_dxf').onclick=async()=>{if(await saveFile(safeName()+'_dxf.zip',makeDXFZip()))msg('DXF uložen (rozbal ZIP v aplikaci Soubory).')};
-  $('e_both').onclick=async()=>{if(await saveFile(safeName()+'.pdf',await makePDF())&&await saveFile(safeName()+'.json',json()))msg('Uloženo PDF i data.')};
+  $('e_both').onclick=guard(async()=>{if(await saveFile(safeName()+'.pdf',await makePDF())&&await saveFile(safeName()+'.json',json()))msg('Uloženo PDF i data.')});
   $('e_copy').onclick=async()=>{const t=json();try{await navigator.clipboard.writeText(t);msg('Data zkopírována.')}catch(e){card.insertAdjacentHTML('beforeend',`<textarea id="e_ta" readonly>${esc(t)}</textarea>`);const ta=$('e_ta');ta.focus();ta.select();msg('Označ text a zkopíruj ručně.')}};
   $('e_show').onclick=async()=>{const url=URL.createObjectURL(await toBlob(renderPNG(),'image/png'));card.insertAdjacentHTML('beforeend',`<img src="${url}" alt="Náčrt ${esc(S.name)}">`);msg('Podrž prst na obrázku → Uložit do Fotek.')};
 };
@@ -1713,7 +1828,7 @@ photoIn.addEventListener('change',async()=>{
     const M=1280,k=Math.min(1,M/Math.max(im.naturalWidth,im.naturalHeight));const c=document.createElement('canvas');c.width=Math.round(im.naturalWidth*k);c.height=Math.round(im.naturalHeight*k);
     c.getContext('2d').drawImage(im,0,0,c.width,c.height);URL.revokeObjectURL(url);const src=c.toDataURL('image/jpeg',.78);
     const w=Math.min(W*.4,360)/view.s,h=w*c.height/c.width;const p=s2w([W/2,H/2]);
-    pushUndo();const it={id:uid(),kind:'photo',p,w,h,src,note:''};S.items.push(it);save();select({type:'item',id:it.id});toast('Fotka vložena – zvětšíš ji tažením za roh');
+    pushUndo();const it={id:uid(),kind:'photo',p,w,h,src,note:''};if(idb){try{await storePhoto(it)}catch(e){}}S.items.push(it);save();select({type:'item',id:it.id});toast('Fotka vložena – zvětšíš ji tažením za roh');
   }catch(e){toast('Fotku se nepodařilo načíst')}
 });
 const fileIn=document.getElementById('fileIn');
@@ -1723,7 +1838,7 @@ document.getElementById('backupBtn').onclick=async()=>{
   <div class="menu"><button class="btn primary" id="b_one">Zálohovat tento výkres</button><button class="btn" id="b_all">Zálohovat všechny výkresy (${store.sketches.length})</button><button class="btn" id="b_load">Načíst zálohu ze souboru…</button></div><p id="b_msg" style="margin-top:12px"></p>`);
   const $=id=>document.getElementById(id),msg=t=>{$('b_msg').textContent=t};
   await getDl();
-  const pack=list=>JSON.stringify({format:'zamereni-zaloha/1',ulozeno:new Date().toISOString(),jednotky:ST.unit,vykresy:list});
+  const pack=list=>JSON.stringify({format:'zamereni-zaloha/1',ulozeno:new Date().toISOString(),jednotky:ST.unit,vykresy:list.map(sk=>{const c=clone(sk);c.items.forEach(it=>{if(it.kind==='photo'&&!it.src&&it.photoId)it.src=photoData.get(it.photoId)||''});return c})});
   const stamp=new Date().toISOString().slice(0,16).replace(/[-:T]/g,'');
   const doSave=async(name,data)=>{
     if(!dl){card.insertAdjacentHTML('beforeend',`<textarea readonly>${esc(data)}</textarea>`);msg('Ukládání souborů tu nejde – text zálohy si zkopíruj a ulož.');return}
@@ -1741,7 +1856,7 @@ fileIn.addEventListener('change',async()=>{
     const list=data&&data.format==='zamereni-zaloha/1'&&Array.isArray(data.vykresy)?data.vykresy:null;
     if(!list||!list.length){msg('Tohle není soubor zálohy ze skicáku.');return}
     const first=store.sketches.length;
-    list.forEach(s=>{const n=normalizeSketch(clone(s));n.id=uid();if(store.sketches.some(x=>x.name===n.name))n.name+=' (načteno)';store.sketches.push(n)});
+    for(const s of list){const n=normalizeSketch(clone(s));n.id=uid();if(store.sketches.some(x=>x.name===n.name))n.name+=' (načteno)';for(const it of n.items)if(it.kind==='photo'&&it.src){try{await storePhoto(it)}catch(e){}}store.sketches.push(n)}
     modal.hidden=true;switchSketch(first);toast(list.length>1?`Načteno ${list.length} výkresů`:'Výkres načten');
   }catch(e){msg('Soubor se nepodařilo načíst.')}
 });
@@ -1751,6 +1866,7 @@ let toastT=0;const toastEl=document.getElementById('toast');
 function toast(t){toastEl.textContent=t;toastEl.classList.add('show');clearTimeout(toastT);toastT=setTimeout(()=>toastEl.classList.remove('show'),1800)}
 window.__sk={get labPos(){return labPos},get S(){return S},exportData,buildDXF,buildPDF,buildZip,setEditMode,select,get view(){return view},get sel(){return sel}};
 renderSketchSel();renderRail();renderCtx();renderToggles();renderVis();renderSide();updateHint();
+initPhotos();
 if(document.fonts&&document.fonts.ready)document.fonts.ready.then(draw);
 })();
 </script>
