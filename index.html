@@ -67,6 +67,10 @@ canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none;displa
 .toast{position:absolute;left:50%;top:64px;transform:translateX(-50%);background:var(--ink);color:#fff;padding:8px 14px;border-radius:999px;font-size:14px;pointer-events:none;opacity:0;transition:opacity .2s;z-index:3;white-space:nowrap}
 .toast.show{opacity:1}
 .zoom{position:absolute;right:12px;bottom:12px;display:flex;gap:6px}
+.sidetab{position:absolute;right:0;top:50%;transform:translateY(-50%);width:16px;height:44px;padding:0;border:1px solid var(--line);border-right:0;border-radius:8px 0 0 8px;background:rgba(255,255,255,.95);color:var(--ink-2);display:flex;align-items:center;justify-content:center;cursor:pointer;z-index:3;box-shadow:-2px 0 6px rgba(29,36,48,.06)}
+.sidetab svg{width:12px;height:12px}
+.sidetab:focus-visible{outline:2px solid var(--focus);outline-offset:1px}
+.app.side-off .side{display:none}
 /* side panel */
 .side{grid-area:side;width:318px;border-left:1px solid var(--line);background:var(--panel);overflow-y:auto;display:flex;flex-direction:column;-webkit-user-select:none;user-select:none}
 .side input{-webkit-user-select:text;user-select:text}
@@ -121,6 +125,7 @@ canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none;displa
 .menu2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .menu2 .btn{justify-content:flex-start;height:44px}
 @media (max-width:760px){
+  .sidetab{top:auto;bottom:0;right:auto;left:50%;transform:translateX(-50%) rotate(90deg);transform-origin:center;margin-bottom:-14px}
   .app{grid-template-columns:auto 1fr;grid-template-rows:auto 1fr auto;grid-template-areas:"top top" "rail stage" "side side"}
   .side{width:auto;max-height:36vh;border-left:0;border-top:1px solid var(--line)}
   .tool{width:52px;font-size:9.5px}
@@ -155,6 +160,7 @@ canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none;displa
     <div class="ctx" id="ctx" hidden></div>
     <div class="toast" id="toast"></div>
     <div class="hint" id="hintWrap"><span id="hint"></span></div>
+    <button class="sidetab" id="sideTab" aria-label="Skrýt panel" title="Skrýt panel"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2l4 4-4 4"/></svg></button>
     <div class="zoom">
       <button class="btn" id="fitBtn" title="Zobrazit vše" aria-label="Zobrazit vše"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
     </div>
@@ -192,7 +198,7 @@ const VIS_DEF={roomNames:true,wallIds:true,wallVals:true,openIds:true,openVals:t
 const VIS_N=[['roomNames','Názvy místností'],['wallIds','Označení stěn'],['wallVals','Hodnoty stěn'],['openIds','Označení otvorů'],['openVals','Hodnoty otvorů'],['itemIds','Označení schodů, komínů, sloupů'],['itemVals','Hodnoty schodů, komínů, sloupů'],['texts','Texty a čísla'],['drawings','Ruční kresba'],['grid','Mřížka']];
 const LABEL_KEYS=['roomNames','wallIds','wallVals','openIds','openVals','itemIds','itemVals','texts'];
 const DEF_SET={unit:'mm',paper:'A4',colWall:'#8d9199',colWin:'#f28c18',colDoor:'#e03a3a',colPass:'#8b3fd9',colNiche:'#0e8f88',colStair:'#2f4b7c',colChim:'#4a4f57',
-  fingerDraw:null,scaleMode:false,drawColor:'#1b1f24',drawDash:'solid',drawWidth:'mid',stairType:'straight',stairRef:'C',passArch:false,nicheArch:false,colShape:'round',doorKind:'swing',vis:null};
+  fingerDraw:null,scaleMode:false,sideCollapsed:false,drawColor:'#1b1f24',drawDash:'solid',drawWidth:'mid',stairType:'straight',stairRef:'C',passArch:false,nicheArch:false,colShape:'round',doorKind:'swing',vis:null};
 
 /* ================= state ================= */
 const uid=()=>Math.random().toString(36).slice(2,9);
@@ -1309,7 +1315,14 @@ function renderVis(){
   ab.textContent=anyOn?'Skrýt všechny popisky a čísla':'Zobrazit všechny popisky a čísla';
   ab.onclick=()=>{LABEL_KEYS.forEach(k=>ST.vis[k]=!anyOn);save();renderVis();draw()};
 }
+function applySide(){
+  document.querySelector('.app').classList.toggle('side-off',!!ST.sideCollapsed);
+  const t=document.getElementById('sideTab');t.querySelector('path').setAttribute('d',ST.sideCollapsed?'M8 2L4 6l4 4':'M4 2l4 4-4 4');
+  const l=ST.sideCollapsed?'Zobrazit panel':'Skrýt panel';t.title=l;t.setAttribute('aria-label',l);t.setAttribute('aria-expanded',ST.sideCollapsed?'false':'true');
+}
+document.getElementById('sideTab').onclick=()=>{ST.sideCollapsed=!ST.sideCollapsed;save();applySide()};
 function renderSide(focus){
+  if(focus&&ST.sideCollapsed){ST.sideCollapsed=false;save();applySide()}
   renderEdit();
   if(!sel){
     propsEl.innerHTML=`<p class="empty">Ťukni prstem na prvek (stěnu, okno, schody…) – tady pak zapíšeš rozměry a nahoře ho můžeš posunout, otočit, zkopírovat nebo zrcadlit.</p>`;
@@ -1865,7 +1878,7 @@ fileIn.addEventListener('change',async()=>{
 let toastT=0;const toastEl=document.getElementById('toast');
 function toast(t){toastEl.textContent=t;toastEl.classList.add('show');clearTimeout(toastT);toastT=setTimeout(()=>toastEl.classList.remove('show'),1800)}
 window.__sk={get labPos(){return labPos},get S(){return S},exportData,buildDXF,buildPDF,buildZip,setEditMode,select,get view(){return view},get sel(){return sel}};
-renderSketchSel();renderRail();renderCtx();renderToggles();renderVis();renderSide();updateHint();
+applySide();renderSketchSel();renderRail();renderCtx();renderToggles();renderVis();renderSide();updateHint();
 initPhotos();
 if(document.fonts&&document.fonts.ready)document.fonts.ready.then(draw);
 })();
