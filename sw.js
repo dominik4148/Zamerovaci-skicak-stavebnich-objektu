@@ -1,5 +1,5 @@
 /* Offline režim: všechny soubory aplikace se uloží do mezipaměti. Při změně aplikace zvyš číslo verze. */
-const VER = 'zapisnik-v5';
+const VER = 'zapisnik-v4';
 const FILES = ['./', 'index.html', 'app.css', 'manifest.webmanifest', 'icon-180.png', 'icon-512.png',
   'js/util.js', 'js/db.js', 'js/geom.js', 'js/shapes.js', 'js/text.js', 'js/render.js', 'js/pdfio.js', 'js/home.js', 'js/editor.js', 'js/main.js',
   'lib/pdf-lib.min.js', 'lib/pdf.min.js', 'lib/pdf.worker.min.js'];
