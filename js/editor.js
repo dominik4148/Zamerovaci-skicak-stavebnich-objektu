@@ -124,7 +124,8 @@ const Editor = (() => {
   }
   let liveRaf = 0;
   function requestLive() { if (!liveRaf) liveRaf = requestAnimationFrame(() => { liveRaf = 0; drawLive(); }); }
-  function drawLive() {
+  function drawLive() { drawLiveInner(); drawGuides(); }
+  function drawLiveInner() {
     const d = E.dpr, a = E.act, v = E.view;
     lctx.setTransform(d, 0, 0, d, 0, 0);
     lctx.clearRect(0, 0, E.vw, E.vh);
@@ -233,7 +234,15 @@ const Editor = (() => {
     if (E.tool !== t && E.tool !== 'eraser') E.prevTool = E.tool;
     E.tool = t;
     $$('#tools .tbtn').forEach(b => b.classList.toggle('on', b.dataset.tool === t));
+    E.subHidden = false; $('#sub').hidden = false;
     renderSub();
+  }
+  /* ťuknutí na už vybraný nástroj schová / znovu ukáže paletku pod lištou */
+  function toolTap(t) {
+    if (E.tool !== t) return setTool(t);
+    E.subHidden = !E.subHidden;
+    $('#sub').hidden = E.subHidden;
+    closePop();
   }
   const sep = () => el('span', { class: 'vsep' });
   function sliderPop(anchor, val, min, max, step, onInput, onDone) {
@@ -378,9 +387,102 @@ const Editor = (() => {
     }
     return Math.abs(lx) <= hw && Math.abs(ly) <= hh ? { type: 'move' } : null;
   }
+  /* ================= zarovnávání (vodítka) =================
+     Okraje a středy tvarů, fotek a textových polí na stejné stránce. Když se okraj nebo střed
+     posouvaného či nového objektu dostane blízko k jejich linii, přichytí se a ukáže se růžová
+     tečkovaná čára. Ručně psané tahy se jako cíl nepoužívají. */
+  const _kbox = new WeakMap();
+  function keyBox(it) { // skutečný obrys položky v souřadnicích stránky [x0,y0,x1,y1]
+    let b = _kbox.get(it);
+    if (b) return b;
+    if (it.t === 's') { const d = decPts(it); b = [Math.min(...d.X), Math.min(...d.Y), Math.max(...d.X), Math.max(...d.Y)]; }
+    else b = polyBBox(boxCorners(it));
+    _kbox.set(it, b);
+    return b;
+  }
+  const isGuideItem = it => it.t === 'i' || it.t === 't' || (it.t === 's' && !!it.sp);
+  const snapTol = () => 8 / E.view.s;
+  function snapTargets(page, skip) { // světové obdélníky cílů na stránce
+    if (!page) return [];
+    const [ox, oy] = origin(page), out = [];
+    for (const it of page.items) {
+      if (skip && skip.has(it.id) || !isGuideItem(it) || E.hide.has(it.id)) continue;
+      const b = keyBox(it);
+      out.push([b[0] + ox, b[1] + oy, b[2] + ox, b[3] + oy]);
+    }
+    return out;
+  }
+  const keysX = b => [b[0], (b[0] + b[2]) / 2, b[2]], keysY = b => [b[1], (b[1] + b[3]) / 2, b[3]];
+  /* nejbližší přichycení: vals = souřadnice pohyblivých bodů na jedné ose → { d, v, t } */
+  function nearest(vals, tg, keys) {
+    let best = null;
+    const tol = snapTol();
+    for (const b of tg) for (const t of keys(b)) for (const v of vals) {
+      const d = t - v;
+      if (Math.abs(d) <= tol && (!best || Math.abs(d) < Math.abs(best.d))) best = { d, v, t };
+    }
+    return best;
+  }
+  /* růžové čáry pro výsledné postavení: box = pohyblivý objekt (nebo bod jako nulový obdélník) */
+  function makeGuides(box, tg, useX, useY) {
+    const G = [], e = 1e-3 + 0.02 / E.view.s, m = 10 / E.view.s;
+    for (const b of tg) {
+      if (useX) for (const x of new Set(keysX(box))) if (keysX(b).some(t => Math.abs(t - x) < e)) G.push([x, Math.min(b[1], box[1]) - m, x, Math.max(b[3], box[3]) + m]);
+      if (useY) for (const y of new Set(keysY(box))) if (keysY(b).some(t => Math.abs(t - y) < e)) G.push([Math.min(b[0], box[0]) - m, y, Math.max(b[2], box[2]) + m, y]);
+    }
+    return G;
+  }
+  /* posun celého obdélníku */
+  function snapMove(box, tg) {
+    const sx = nearest(keysX(box), tg, keysX), sy = nearest(keysY(box), tg, keysY);
+    const dx = sx ? sx.d : 0, dy = sy ? sy.d : 0, nb = [box[0] + dx, box[1] + dy, box[2] + dx, box[3] + dy];
+    return { dx, dy, guides: makeGuides(nb, tg, !!sx, !!sy) };
+  }
+  /* volný bod (konec přímky); lockX/lockY = osa, kterou už drží vodorovné/svislé srovnání */
+  function snapPoint(p, tg, lockX, lockY) {
+    const sx = lockX ? null : nearest([p[0]], tg, keysX), sy = lockY ? null : nearest([p[1]], tg, keysY);
+    const q = [p[0] + (sx ? sx.d : 0), p[1] + (sy ? sy.d : 0)];
+    return { p: q, guides: makeGuides([q[0], q[1], q[0], q[1]], tg, !!sx, !!sy) };
+  }
+  /* zvětšení kolem pevného bodu A: box se mění na ose x faktorem kx, na ose y ky (box0 = původní) */
+  function snapScale(box0, A, kx, ky, uniform, tg) {
+    const at = (k0, k1) => [A[0] + (box0[0] - A[0]) * k0, A[1] + (box0[1] - A[1]) * k1, A[0] + (box0[2] - A[0]) * k0, A[1] + (box0[3] - A[1]) * k1];
+    const cur = at(kx, ky), tol = snapTol();
+    const cand = (vals0, a, k, keys) => { // pohyblivé hodnoty na ose (bez pevného bodu)
+      let best = null;
+      for (const v0 of vals0) {
+        const v = a + (v0 - a) * k;
+        if (Math.abs(v0 - a) < 1e-6) continue;
+        for (const b of tg) for (const t of keys(b)) { const d = t - v; if (Math.abs(d) <= tol && (!best || Math.abs(d) < Math.abs(best.d))) best = { d, k: k * (t - a) / (v - a) }; }
+      }
+      return best;
+    };
+    const bx = cand(keysX(box0), A[0], kx, keysX), by = cand(keysY(box0), A[1], ky, keysY);
+    if (uniform) {
+      const b = bx && by ? (Math.abs(bx.d) <= Math.abs(by.d) ? bx : by) : bx || by;
+      if (b && b.k > 0.02) { kx = ky = b.k; }
+    } else { if (bx && bx.k > 0.02) kx = bx.k; if (by && by.k > 0.02) ky = by.k; }
+    const nb = at(kx, ky);
+    return { kx, ky, guides: makeGuides([Math.min(nb[0], nb[2]), Math.min(nb[1], nb[3]), Math.max(nb[0], nb[2]), Math.max(nb[1], nb[3])], tg, true, true), changed: nb.some((v, i) => Math.abs(v - cur[i]) > 1e-9) };
+  }
+  function drawGuides() {
+    if (!E.guides || !E.guides.length) return;
+    const v = E.view, d = E.dpr;
+    lctx.save();
+    lctx.setTransform(d, 0, 0, d, 0, 0);
+    lctx.strokeStyle = '#ff3fa4'; lctx.lineWidth = 1.4; lctx.setLineDash([2, 4]); lctx.lineCap = 'round';
+    lctx.beginPath();
+    for (const g of E.guides) { lctx.moveTo(g[0] * v.s + v.tx, g[1] * v.s + v.ty); lctx.lineTo(g[2] * v.s + v.tx, g[3] * v.s + v.ty); }
+    lctx.stroke();
+    lctx.restore();
+  }
+
   function xformStart(hit, sx, sy, ptr) {
     const f = E.sel.frame, [wx, wy] = s2w(sx, sy);
     E.act = { type: 'xform', hit, ptr, sx, sy, wx, wy, f0: { ...f }, items: selItems(), M: [1, 0, 0, 1, 0, 0], moved: false };
+    let b = [Infinity, Infinity, -Infinity, -Infinity];
+    for (const { page, it } of E.act.items) { const [ox, oy] = origin(page), q = keyBox(it); b = [Math.min(b[0], q[0] + ox), Math.min(b[1], q[1] + oy), Math.max(b[2], q[2] + ox), Math.max(b[3], q[3] + oy)]; }
+    E.act.box0 = b; E.act.skip = new Set(E.act.items.map(x => x.it.id));
     if (hit.type === 'scale') {
       const c = Math.cos(f.r), s = Math.sin(f.r), lx = -hit.ax * f.w / 2, ly = -hit.ay * f.h / 2;
       E.act.ax = f.cx + lx * c - ly * s; E.act.ay = f.cy + lx * s + ly * c;
@@ -396,13 +498,27 @@ const Editor = (() => {
     }
     if (a.hit.type === 'end') { // tažení za konec přímky: druhý konec zůstává na místě
       const { page, it } = a.items[0], [ox, oy] = origin(page), p = it.pts;
-      const fix = a.hit.i ? [p[0] / PQ, p[1] / PQ] : [p[3] / PQ, p[4] / PQ], mv = Shapes.snapHV(fix, [wx - ox, wy - oy]);
+      const fix = a.hit.i ? [p[0] / PQ, p[1] / PQ] : [p[3] / PQ, p[4] / PQ];
+      let mv = Shapes.snapHV(fix, [wx - ox, wy - oy]);
+      const sp = snapPoint([mv[0] + ox, mv[1] + oy], snapTargets(page, a.skip), mv[0] === fix[0], mv[1] === fix[1]);
+      mv = [sp.p[0] - ox, sp.p[1] - oy]; E.guides = sp.guides;
       a.preview = { ...it, pts: encPts(Shapes.points({ kind: it.sp, a: a.hit.i ? fix : mv, b: a.hit.i ? mv : fix, w: it.w })) };
       requestLive(); updateOverlay();
       return;
     }
-    if (a.hit.type === 'move') a.M = matT(wx - a.wx, wy - a.wy);
-    else if (a.hit.type === 'scale') a.M = matAbout(a.ax, a.ay, clamp(Math.hypot(wx - a.ax, wy - a.ay) / Math.max(1e-3, Math.hypot(a.wx - a.ax, a.wy - a.ay)), 0.05, 30), 0);
+    E.guides = null;
+    if (a.hit.type === 'move') {
+      const dx = wx - a.wx, dy = wy - a.wy, b = a.box0, nb = [b[0] + dx, b[1] + dy, b[2] + dx, b[3] + dy];
+      const sn = snapMove(nb, snapTargets(pageAt((nb[0] + nb[2]) / 2, (nb[1] + nb[3]) / 2, true), a.skip));
+      a.M = matT(dx + sn.dx, dy + sn.dy); E.guides = sn.guides;
+    } else if (a.hit.type === 'scale') {
+      let k = clamp(Math.hypot(wx - a.ax, wy - a.ay) / Math.max(1e-3, Math.hypot(a.wx - a.ax, a.wy - a.ay)), 0.05, 30);
+      if (Math.abs(f.r) < 1e-6) {
+        const sn = snapScale(a.box0, [a.ax, a.ay], k, k, true, snapTargets(a.items[0].page, a.skip));
+        k = sn.kx; E.guides = sn.guides;
+      }
+      a.M = matAbout(a.ax, a.ay, k, 0);
+    }
     else a.M = matAbout(f.cx, f.cy, 1, Math.atan2(wy - f.cy, wx - f.cx) - Math.atan2(a.wy - f.cy, a.wx - f.cx));
     E.sel.frame = frameWith(f, a.M);
     requestLive(); updateOverlay();
@@ -417,7 +533,7 @@ const Editor = (() => {
     }
   }
   function xformEnd() {
-    const a = E.act; E.act = null;
+    const a = E.act; E.act = null; E.guides = null;
     if (!a.moved) { if (E.sel) { E.sel.menu = !E.sel.menu; updateOverlay(); } return; }
     a.items.forEach(x => E.hide.delete(x.it.id));
     if (a.preview) {
@@ -777,15 +893,44 @@ const Editor = (() => {
     if (a.ex != null && Math.hypot(a.ex - a.fx, a.ey - a.fy) > 0.05) raw.push(a.ex, a.ey, a.fp);
     const sh = Shapes.detect(raw, a.w, 22 / E.view.s);
     if (!sh) return;
-    a.shape = a.shapeCur = sh;
     a.p0 = [raw[raw.length - 3], raw[raw.length - 2]];
+    a.shape = a.shapeCur = snapNewShape(a, sh);
     requestLive();
+  }
+  /* zarovnání nově rozpoznaného tvaru k ostatním objektům na stránce */
+  function snapNewShape(a, sh) {
+    const [ox, oy] = origin(a.page), tg = snapTargets(a.page);
+    E.guides = null;
+    if (!tg.length) return sh;
+    if (sh.kind === 'line' || sh.kind === 'arrow') {
+      const s1 = snapPoint([sh.a[0] + ox, sh.a[1] + oy], tg), A = [s1.p[0] - ox, s1.p[1] - oy];
+      let B = Shapes.snapHV(A, sh.b);
+      const s2 = snapPoint([B[0] + ox, B[1] + oy], tg, B[0] === A[0], B[1] === A[1]);
+      B = [s2.p[0] - ox, s2.p[1] - oy];
+      E.guides = [...s1.guides, ...s2.guides];
+      return { ...sh, a: A, b: B };
+    }
+    if (!sh.P) return sh;
+    const b = polyBBox(sh.P), sn = snapMove([b[0] + ox, b[1] + oy, b[2] + ox, b[3] + oy], tg);
+    E.guides = sn.guides;
+    return sn.dx || sn.dy ? { ...sh, P: sh.P.map(p => [p[0] + sn.dx, p[1] + sn.dy]) } : sh;
   }
   function shapeAdjust(a, sx, sy) { // dokud tužka drží, tvar jde natáhnout / otočit kolem výchozího bodu
     if (!a.adj && Math.hypot(sx - a.hx, sy - a.hy) < 7) return;
     a.adj = true;
     const [wx, wy] = s2w(sx, sy), [ox, oy] = origin(a.page);
-    a.shapeCur = Shapes.adjust(a.shape, a.p0, [wx - ox, wy - oy]);
+    let c = Shapes.adjust(a.shape, a.p0, [wx - ox, wy - oy]);
+    const tg = snapTargets(a.page);
+    E.guides = null;
+    if (tg.length && (c.kind === 'line' || c.kind === 'arrow')) {
+      const sn = snapPoint([c.b[0] + ox, c.b[1] + oy], tg, c.b[0] === c.a[0], c.b[1] === c.a[1]);
+      c = { ...c, b: [sn.p[0] - ox, sn.p[1] - oy] }; E.guides = sn.guides;
+    } else if (tg.length && c._A && Math.abs(c.th) < 1e-9) {
+      const b = polyBBox(a.shape.P), sn = snapScale([b[0] + ox, b[1] + oy, b[2] + ox, b[3] + oy], [c._A[0] + ox, c._A[1] + oy], c._sx, c._sy, !!a.shape.uniform, tg);
+      if (sn.changed) c = Shapes.scaleFrom(a.shape, c._A, sn.kx, sn.ky);
+      E.guides = sn.guides;
+    }
+    a.shapeCur = c;
   }
   const shapeItem = a => ({ t: 's', id: uid(), k: a.k, c: a.c, w: a.w, d: a.d, sp: a.shapeCur.kind, pts: encPts(Shapes.points(a.shapeCur)) });
   /* jemné vyhlazení vstupu (filtr „1 €“) – počítá jen z minulých bodů, takže jednou nakreslená
@@ -907,7 +1052,7 @@ const Editor = (() => {
     penFinish();
   }
   function penFinish() {
-    penId = null;
+    penId = null; E.guides = null;
     const a = E.act;
     if (!a) return;
     if (a.type === 'xform') return xformEnd();
@@ -1159,7 +1304,7 @@ const Editor = (() => {
     T = JSON.parse(JSON.stringify(DEF_TOOLS));
     for (const k in T) Object.assign(T[k], saved[k] || {});
     $('#tools').replaceChildren(...[['pen', 'pen', 'Pero'], ['hl', 'hl', 'Zvýrazňovač'], ['eraser', 'eraser', 'Guma'], ['text', 'text', 'Text'], ['select', 'select', 'Výběr']].map(([t, ic, title]) =>
-      el('button', { class: 'tbtn', dataset: { tool: t }, title, html: icon(ic, 26), onclick: () => setTool(t) })),
+      el('button', { class: 'tbtn', dataset: { tool: t }, title, html: icon(ic, 26), onclick: () => toolTap(t) })),
       el('span', { class: 'vsep' }), el('button', { class: 'tbtn', title: 'Vložit fotku nebo PDF', html: icon('pluscircle', 26), onclick: () => Ins.open() }));
     $('#b-back').onclick = close;
     $('#b-undo').onclick = undo; $('#b-redo').onclick = redo;

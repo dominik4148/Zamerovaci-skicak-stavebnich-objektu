@@ -1,6 +1,6 @@
 'use strict';
 /* Rozpoznání tvarů: z ručně nakreslené čáry udělá přímku, šipku, obdélník, čtverec, kruh, elipsu,
-   trojúhelník, hvězdu, parabolu nebo lomenou (pravoúhlou) čáru. Souřadnice jsou v bodech stránky. */
+   trojúhelník, hvězdu nebo lomenou (pravoúhlou) čáru. Souřadnice jsou v bodech stránky. */
 const Shapes = (() => {
   const DEG = Math.PI / 180;
   const D = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
@@ -90,31 +90,10 @@ const Shapes = (() => {
   function bezPts(a, c, b, n) { const o = []; for (let i = 0; i <= n; i++) o.push(bez(a, c, b, i / n)); return o; }
 
   /* ---------- otevřené tvary ---------- */
-  function fitParabola(P, S, E) {
-    const n = P.length;
-    let T = P.map((p, i) => i / (n - 1)), C = null, err = 0;
-    for (let it = 0; it < 4; it++) {
-      let sx = 0, sy = 0, sw = 0;
-      for (let i = 1; i < n - 1; i++) {
-        const t = T[i], w = 2 * t * (1 - t);
-        sx += w * (P[i][0] - (1 - t) * (1 - t) * S[0] - t * t * E[0]);
-        sy += w * (P[i][1] - (1 - t) * (1 - t) * S[1] - t * t * E[1]);
-        sw += w * w;
-      }
-      if (sw < 1e-9) return null;
-      C = [sx / sw, sy / sw];
-      const B = bezPts(S, C, E, 120);
-      err = 0;
-      T = P.map(p => { let bd = Infinity, bi = 0; for (let j = 0; j <= 120; j++) { const d = D(p, B[j]); if (d < bd) { bd = d; bi = j; } } err += bd; return bi / 120; });
-      err /= n;
-    }
-    return { C, err };
-  }
   function detectOpen(R, L, diag) {
     const P = resample(R, 96), n = P.length, S = P[0], E = P[n - 1], chord = D(S, E);
     let dev = 0;
     for (const p of P) dev = Math.max(dev, distSeg(p[0], p[1], S[0], S[1], E[0], E[1]));
-    if (L < 1.2 * chord && dev < 0.075 * chord) return { kind: 'line', a: S, b: snapHV(S, E) };
     const idx = [0];
     rdp(P, 0, n - 1, Math.max(0.045 * diag, 0.8), idx);
     idx.push(n - 1);
@@ -126,19 +105,17 @@ const Shapes = (() => {
       for (let i = 2; i < V.length && ok; i++) { const d = D(V[i], T); if (d > 0.6 * d1) ok = false; far = Math.max(far, d); }
       if (ok && far > 0.06 * d1) return { kind: 'arrow', a: S, b: snapHV(S, T) };
     }
-    // lomená čára (všechny zlomy ostré) nebo hladký oblouk → parabola; vyhraje přesnější
-    let poly = null, ep = Infinity;
+    // lomená čára (všechny zlomy ostré)
+    let poly = null;
     if (V.length >= 3 && V.length <= 10 && idx.slice(1, -1).every(i => sharpness(P, i, false) > 38 * DEG)) {
       const e = polyErr(P, V, false);
-      if (e < 0.03 * diag) { poly = { kind: 'poly', open: true, P: snapEdges(V, false), th: 0 }; ep = e / L; }
+      if (e < 0.03 * diag) poly = { kind: 'poly', open: true, P: snapEdges(V, false), th: 0 };
     }
-    let maxT = 0;
-    for (let i = 5; i < n - 5; i++) maxT = Math.max(maxT, Math.abs(turn(P, i, 5, false)));
-    if (chord > 0.15 * L) {
-      const f = fitParabola(P, S, E);
-      if (f && f.err / L < (maxT < 42 * DEG ? 0.022 : 0.009) && f.err / L < ep) return { kind: 'par', a: S, b: E, c: f.C, c0: f.C };
-    }
+    // relativně rovná (i mírně prohnutá) čára → vždy přímka; parabola se nedělá, oblouk zůstane, jak byl
+    const line = { kind: 'line', a: S, b: snapHV(S, E) };
+    if (L < 1.15 * chord && dev < 0.06 * chord) return line;
     if (poly) return poly;
+    if (L < 1.3 * chord && dev < 0.13 * chord) return line;
     return null;
   }
 
@@ -276,8 +253,12 @@ const Shapes = (() => {
     let sx, sy;
     if (s.uniform) sx = sy = Math.max(0.05, D(q, A) / Math.max(1e-6, D(q0, A)));
     else { sx = ratio(q[0] - A[0], q0[0] - A[0]); sy = ratio(q[1] - A[1], q0[1] - A[1]); }
-    const bc = Math.cos(s.th), bs = Math.sin(s.th);
-    return { ...s, P: Lp.map(p => rot([A[0] + (p[0] - A[0]) * sx, A[1] + (p[1] - A[1]) * sy], bc, bs)) };
+    return { ...scaleFrom(s, A, sx, sy), _A: A, _sx: sx, _sy: sy };
   }
-  return { detect, points, adjust, snapHV, STRAIGHT };
+  /* zvětšení tvaru kolem pevného rohu A (A je v souřadnicích otočených o -th) */
+  function scaleFrom(s, A, sx, sy) {
+    const co = Math.cos(-s.th), si = Math.sin(-s.th), bc = Math.cos(s.th), bs = Math.sin(s.th);
+    return { ...s, P: s.P.map(p => { const q = rot(p, co, si); return rot([A[0] + (q[0] - A[0]) * sx, A[1] + (q[1] - A[1]) * sy], bc, bs); }) };
+  }
+  return { detect, points, adjust, scaleFrom, snapHV, STRAIGHT };
 })();
